@@ -80,6 +80,12 @@ cfg = SFTConfig(
     max_length=MAX_LEN,
     dataset_text_field="text",
     report_to="none",
+    # T4 is compute capability 7.5: the default chunked_nll loss uses BF16
+    # tensor cores (needs 8.0+) and crashes. Use the plain NLL path + fp16.
+    loss_type="nll",
+    bf16=False,
+    fp16=True,
+    use_liger_kernel=False,
 )
 trainer = SFTTrainer(model=model, args=cfg, train_dataset=ds)
 trainer.train()
