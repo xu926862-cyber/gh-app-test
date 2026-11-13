@@ -69,6 +69,9 @@ model = AutoModelForCausalLM.from_pretrained(
 )
 
 
+_bf16_reported = False
+
+
 def force_amp_safe(model):
     """No bf16 may reach the fp16 GradScaler.
 
@@ -78,17 +81,27 @@ def force_amp_safe(model):
     model in fp16, but the kwarg name changed between transformers 4 and 5 and
     is silently ignored when wrong. Cast whatever is left: frozen weights to
     fp16, trainable ones (LoRA) to fp32 -- both are scaler-safe.
+
+    Also fixes grads: a bf16 grad next to a non-bf16 param would break the
+    optimizer's in-place update, so grads always follow the param dtype.
     """
-    fixed = 0
-    for _, p in model.named_parameters():
+    global _bf16_reported
+    params, grads = [], []
+    for name, p in model.named_parameters():
         if p.__class__.__name__ in ("Params4bit", "Int8Params"):
             continue  # quantized storage, cast via bnb_4bit_compute_dtype instead
-        if p.dtype != torch.bfloat16:
-            continue
-        p.data = p.data.to(torch.float32 if p.requires_grad else torch.float16)
-        fixed += 1
-    if fixed:
-        print(f"dtype guard: cast {fixed} bf16 tensors (trainable->fp32, frozen->fp16)")
+        if p.dtype == torch.bfloat16:
+            p.data = p.data.to(torch.float32 if p.requires_grad else torch.float16)
+            params.append(name)
+        if p.grad is not None and p.grad.dtype == torch.bfloat16:
+            p.grad = p.grad.to(p.dtype)
+            grads.append(name)
+    if (params or grads) and not _bf16_reported:
+        _bf16_reported = True
+        print(
+            f"dtype guard: bf16 params fixed={len(params)} {params[:5]}, "
+            f"bf16 grads fixed={len(grads)} {grads[:5]}"
+        )
 
 
 force_amp_safe(model)
@@ -116,6 +129,9 @@ cfg = SFTConfig(
     per_device_train_batch_size=1,
     gradient_accumulation_steps=8,
     learning_rate=2e-4,
+    # Explicit: clipping is what triggers GradScaler.unscale_, i.e. the call
+    # that explodes on bf16 grads. Keep it on so our guard always runs first.
+    max_grad_norm=1.0,
     logging_steps=1,
     save_strategy="epoch",
     max_length=MAX_LEN,
@@ -128,7 +144,20 @@ cfg = SFTConfig(
     fp16=True,
     use_liger_kernel=False,
 )
-trainer = SFTTrainer(model=model, args=cfg, train_dataset=ds)
+class AmpSafeSFTTrainer(SFTTrainer):
+    """Last line of defence before GradScaler.unscale_() runs.
+
+    Some weights only turn up in bf16 once the trainer has prepared the model,
+    so casting at load time is not enough. Every clipping pass re-runs the
+    dtype fix; whatever caused it gets named in the log.
+    """
+
+    def _clip_grad_norm(self, model):
+        force_amp_safe(model)
+        return super()._clip_grad_norm(model)
+
+
+trainer = AmpSafeSFTTrainer(model=model, args=cfg, train_dataset=ds)
 trainer.train()
 trainer.save_model(OUT_DIR)
 tokenizer.save_pretrained(OUT_DIR)
