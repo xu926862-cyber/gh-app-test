@@ -50,14 +50,22 @@ bnb = BitsAndBytesConfig(
     bnb_4bit_compute_dtype=torch.float16,
     bnb_4bit_use_double_quant=True,
 )
+# Qwen ships bfloat16 weights; the fp16 GradScaler on T4 cannot unscale bf16
+# gradients. transformers 5 renamed torch_dtype -> dtype and ignores the old
+# kwarg, so pick the right one for the installed version.
+import transformers
+
+_dtype_kw = (
+    {"dtype": torch.float16}
+    if int(transformers.__version__.split(".")[0]) >= 5
+    else {"torch_dtype": torch.float16}
+)
 model = AutoModelForCausalLM.from_pretrained(
     BASE_MODEL,
     quantization_config=bnb,
     device_map="auto",
     trust_remote_code=True,
-    # Qwen ships bfloat16 weights by default; the fp16 GradScaler on T4
-    # cannot unscale bf16 gradients, so force float16 throughout.
-    torch_dtype=torch.float16,
+    **_dtype_kw,
 )
 model = prepare_model_for_kbit_training(model)
 lora = LoraConfig(
