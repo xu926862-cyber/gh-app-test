@@ -1,0 +1,6 @@
+{
+  "api": "http://127.0.0.1:18801/v1",
+  "model": "opencode/deepseek-v4.1-flash-free",
+  "max_turns": 6,
+  "temperature": 0.2
+}
