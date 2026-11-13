@@ -1,7 +1,7 @@
-torch>=2.4
+# Colab already ships torch/accelerate; installing them again is slow and can
+# break the preinstalled CUDA build. Only add what training needs on top.
 transformers>=4.46
 datasets>=3.0
 peft>=0.13
 trl>=0.12
 bitsandbytes>=0.44
-accelerate>=1.0
