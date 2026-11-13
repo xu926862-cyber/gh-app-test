@@ -67,6 +67,31 @@ model = AutoModelForCausalLM.from_pretrained(
     trust_remote_code=True,
     **_dtype_kw,
 )
+
+
+def force_amp_safe(model):
+    """No bf16 may reach the fp16 GradScaler.
+
+    Accelerate's GradScaler.unscale_ calls
+    _amp_foreach_non_finite_check_and_unscale_cuda, which raises
+    NotImplementedError for BFloat16. Normally the dtype kwarg above keeps the
+    model in fp16, but the kwarg name changed between transformers 4 and 5 and
+    is silently ignored when wrong. Cast whatever is left: frozen weights to
+    fp16, trainable ones (LoRA) to fp32 -- both are scaler-safe.
+    """
+    fixed = 0
+    for _, p in model.named_parameters():
+        if p.__class__.__name__ in ("Params4bit", "Int8Params"):
+            continue  # quantized storage, cast via bnb_4bit_compute_dtype instead
+        if p.dtype != torch.bfloat16:
+            continue
+        p.data = p.data.to(torch.float32 if p.requires_grad else torch.float16)
+        fixed += 1
+    if fixed:
+        print(f"dtype guard: cast {fixed} bf16 tensors (trainable->fp32, frozen->fp16)")
+
+
+force_amp_safe(model)
 model = prepare_model_for_kbit_training(model)
 lora = LoraConfig(
     r=16,
@@ -77,7 +102,12 @@ lora = LoraConfig(
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
 )
 model = get_peft_model(model, lora)
+force_amp_safe(model)  # adapters may come out in the base model's dtype
 model.print_trainable_parameters()
+print(
+    "trainable dtypes:",
+    sorted({str(p.dtype) for p in model.parameters() if p.requires_grad}),
+)
 
 # --- train ---
 cfg = SFTConfig(
