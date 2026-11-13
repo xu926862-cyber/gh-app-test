@@ -21,6 +21,14 @@
 BASE_MODEL=Qwen/Qwen2.5-Coder-0.5B-Instruct EPOCHS=1 python train_lora.py
 ```
 
+## 常见报错
+
+- `NotImplementedError: "_amp_foreach_non_finite_check_and_unscale_cuda" not implemented for 'BFloat16'`
+  模型被加载成了 bf16，而 `fp16=True` 的 GradScaler 不能 unscale bf16 梯度（T4 本身也只适合 fp16）。
+  脚本按 transformers 版本选 `dtype`/`torch_dtype`，并有 `force_amp_safe()` 兜底。
+  还报的话，先确认 Colab 里跑的是最新代码——重跑第一个单元会强制重新 clone。
+- `AttributeError: ... torch_dtype ...`：transformers 5 已把参数改名为 `dtype`，脚本里已兼容。
+
 ## 训练完怎么用
 
 - Ollama 支持加载 LoRA：`ollama create repo-bot -f Modelfile`，Modelfile 里 `FROM qwen2.5-coder:3b` + `ADAPTER ./lora-repo-bot/adapter_model.safetensors`
