@@ -55,6 +55,9 @@ model = AutoModelForCausalLM.from_pretrained(
     quantization_config=bnb,
     device_map="auto",
     trust_remote_code=True,
+    # Qwen ships bfloat16 weights by default; the fp16 GradScaler on T4
+    # cannot unscale bf16 gradients, so force float16 throughout.
+    torch_dtype=torch.float16,
 )
 model = prepare_model_for_kbit_training(model)
 lora = LoraConfig(
