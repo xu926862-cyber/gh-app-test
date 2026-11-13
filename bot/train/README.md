@@ -25,8 +25,9 @@ BASE_MODEL=Qwen/Qwen2.5-Coder-0.5B-Instruct EPOCHS=1 python train_lora.py
 
 - `NotImplementedError: "_amp_foreach_non_finite_check_and_unscale_cuda" not implemented for 'BFloat16'`
   模型被加载成了 bf16，而 `fp16=True` 的 GradScaler 不能 unscale bf16 梯度（T4 本身也只适合 fp16）。
-  脚本按 transformers 版本选 `dtype`/`torch_dtype`，并有 `force_amp_safe()` 兜底。
-  还报的话，先确认 Colab 里跑的是最新代码——重跑第一个单元会强制重新 clone。
+  脚本按 transformers 版本选 `dtype`/`torch_dtype`，并在加载后、PEFT 包装后、每次梯度裁剪前
+  各跑一遍 `force_amp_safe()`（bf16 参数/梯度就地转换），日志会打印修了哪些参数。
+  训练器是 `AmpSafeSFTTrainer`，是最后一道兜底。
 - `AttributeError: ... torch_dtype ...`：transformers 5 已把参数改名为 `dtype`，脚本里已兼容。
 
 ## 训练完怎么用
